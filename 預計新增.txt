@@ -1,0 +1,1358 @@
+修改main.js:
+
+const { app, BrowserWindow, ipcMain } = require("electron");
+const path = require("path");
+const fs = require("fs");
+
+let controlWindow = null;
+const noteWindows = new Map();
+
+const dataFile = path.join(app.getPath("userData"), "notes.json");
+
+let notes = [];
+
+// ==============================
+// 資料儲存
+// ==============================
+
+function loadNotes() {
+    try {
+        if (fs.existsSync(dataFile)) {
+            const data = fs.readFileSync(dataFile, "utf8");
+            notes = JSON.parse(data);
+        }
+    } catch (error) {
+        console.error("讀取便利貼失敗:", error);
+        notes = [];
+    }
+}
+
+function saveNotes() {
+    try {
+        fs.writeFileSync(
+            dataFile,
+            JSON.stringify(notes, null, 2),
+            "utf8"
+        );
+    } catch (error) {
+        console.error("儲存便利貼失敗:", error);
+    }
+}
+
+// ==============================
+// 控制面板
+// ==============================
+
+function createControlWindow() {
+
+    if (controlWindow && !controlWindow.isDestroyed()) {
+        controlWindow.show();
+        controlWindow.focus();
+        return;
+    }
+
+    controlWindow = new BrowserWindow({
+        width: 380,
+        height: 650,
+        minWidth: 350,
+        minHeight: 500,
+        title: "我的便利貼",
+        resizable: true,
+
+        webPreferences: {
+            preload: path.join(__dirname, "preload.js"),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    controlWindow.loadFile("control.html");
+
+    controlWindow.on("closed", () => {
+        controlWindow = null;
+    });
+}
+
+
+// ==============================
+// 建立便利貼
+// ==============================
+
+function createNoteWindow(note) {
+
+    if (noteWindows.has(note.id)) {
+        return;
+    }
+
+    const noteWindow = new BrowserWindow({
+        width: note.width || 300,
+        height: note.height || 300,
+
+        x: note.x,
+        y: note.y,
+
+        frame: false,
+        transparent: true,
+        resizable: true,
+
+        skipTaskbar: true,
+
+        webPreferences: {
+            preload: path.join(__dirname, "preload.js"),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    noteWindow.loadFile("note.html");
+
+    noteWindow.webContents.on("did-finish-load", () => {
+
+        noteWindow.webContents.send("load-note", note);
+
+    });
+
+
+    // 移動後保存位置
+
+    noteWindow.on("moved", () => {
+
+        const [x, y] = noteWindow.getPosition();
+
+        note.x = x;
+        note.y = y;
+
+        saveNotes();
+
+    });
+
+
+    // 調整大小後保存
+
+    noteWindow.on("resized", () => {
+
+        const [width, height] = noteWindow.getSize();
+
+        note.width = width;
+        note.height = height;
+
+        saveNotes();
+
+    });
+
+
+    noteWindow.on("closed", () => {
+
+        noteWindows.delete(note.id);
+
+    });
+
+
+    noteWindows.set(note.id, noteWindow);
+}
+
+
+// ==============================
+// 建立新的便利貼
+// ==============================
+
+function createNewNote() {
+
+    const offset = notes.length * 30;
+
+    const note = {
+
+        id: Date.now(),
+
+        text: "",
+
+        color: "#fff59d",
+
+        x: 450 + offset,
+
+        y: 150 + offset,
+
+        width: 300,
+
+        height: 300
+
+    };
+
+    notes.push(note);
+
+    saveNotes();
+
+    createNoteWindow(note);
+
+    sendNotesToControl();
+
+    return note;
+}
+
+
+// ==============================
+// 傳送便利貼清單
+// ==============================
+
+function sendNotesToControl() {
+
+    if (
+        controlWindow &&
+        !controlWindow.isDestroyed()
+    ) {
+
+        controlWindow.webContents.send(
+            "notes-updated",
+            notes
+        );
+
+    }
+}
+
+
+// ==============================
+// IPC
+// ==============================
+
+// 開啟控制面板
+
+ipcMain.on("open-control", () => {
+
+    createControlWindow();
+
+    sendNotesToControl();
+
+});
+
+
+// 新增
+
+ipcMain.on("create-note", () => {
+
+    createNewNote();
+
+});
+
+
+// 刪除
+
+ipcMain.on("delete-note", (event, id) => {
+
+    const index =
+        notes.findIndex(note => note.id === id);
+
+    if (index !== -1) {
+
+        notes.splice(index, 1);
+
+    }
+
+    const noteWindow =
+        noteWindows.get(id);
+
+    if (
+        noteWindow &&
+        !noteWindow.isDestroyed()
+    ) {
+
+        noteWindow.close();
+
+    }
+
+    noteWindows.delete(id);
+
+    saveNotes();
+
+    sendNotesToControl();
+
+});
+
+
+// 修改內容 / 顏色
+
+ipcMain.on("update-note", (event, data) => {
+
+    const note =
+        notes.find(note => note.id === data.id);
+
+    if (!note) {
+        return;
+    }
+
+    if (data.text !== undefined) {
+
+        note.text = data.text;
+
+    }
+
+    if (data.color !== undefined) {
+
+        note.color = data.color;
+
+    }
+
+    saveNotes();
+
+    // 如果修改顏色，通知便利貼立即更新
+
+    const noteWindow =
+        noteWindows.get(note.id);
+
+    if (
+        noteWindow &&
+        !noteWindow.isDestroyed()
+    ) {
+
+        noteWindow.webContents.send(
+            "note-updated",
+            note
+        );
+
+    }
+
+    sendNotesToControl();
+
+});
+
+
+// 點控制面板中的便利貼
+
+ipcMain.on("focus-note", (event, id) => {
+
+    const noteWindow =
+        noteWindows.get(id);
+
+    if (
+        noteWindow &&
+        !noteWindow.isDestroyed()
+    ) {
+
+        noteWindow.show();
+        noteWindow.focus();
+
+    }
+
+});
+
+
+// 開啟 / 關閉控制面板
+
+ipcMain.on("close-control", () => {
+
+    if (
+        controlWindow &&
+        !controlWindow.isDestroyed()
+    ) {
+
+        controlWindow.hide();
+
+    }
+
+});
+
+
+// ==============================
+// Electron 啟動
+// ==============================
+
+app.whenReady().then(() => {
+
+    loadNotes();
+
+    // 如果完全沒有便利貼
+    // 第一次開啟自動建立一張
+
+    if (notes.length === 0) {
+
+        createNewNote();
+
+    } else {
+
+        notes.forEach(note => {
+
+            createNoteWindow(note);
+
+        });
+
+    }
+
+    createControlWindow();
+
+});
+
+
+// 關閉所有視窗後退出
+
+app.on("window-all-closed", () => {
+
+    app.quit();
+
+});
+
+/////////////////////////////////////////////////////////////////
+
+新增preload.js：
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("electronAPI", {
+
+    // 新增便利貼
+    createNote: () => {
+        ipcRenderer.send("create-note");
+    },
+
+    // 刪除便利貼
+    deleteNote: (id) => {
+        ipcRenderer.send("delete-note", id);
+    },
+
+    // 修改便利貼
+    updateNote: (data) => {
+        ipcRenderer.send("update-note", data);
+    },
+
+    // 選取便利貼
+    focusNote: (id) => {
+        ipcRenderer.send("focus-note", id);
+    },
+
+    // 開啟控制面板
+    openControl: () => {
+        ipcRenderer.send("open-control");
+    },
+
+    // 關閉控制面板
+    closeControl: () => {
+        ipcRenderer.send("close-control");
+    },
+
+    // 接收便利貼資料
+    onLoadNote: (callback) => {
+
+        ipcRenderer.on(
+            "load-note",
+            (event, note) => {
+
+                callback(note);
+
+            }
+        );
+
+    },
+
+    // 便利貼更新
+    onNoteUpdated: (callback) => {
+
+        ipcRenderer.on(
+            "note-updated",
+            (event, note) => {
+
+                callback(note);
+
+            }
+        );
+
+    },
+
+    // 控制面板更新
+    onNotesUpdated: (callback) => {
+
+        ipcRenderer.on(
+            "notes-updated",
+            (event, notes) => {
+
+                callback(notes);
+
+            }
+        );
+
+    }
+
+});
+
+///////////////////////////////////////////////////////////////
+
+新增note.html：
+
+<!DOCTYPE html>
+
+<html lang="zh-TW">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>我的便利貼</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+
+    width: 100%;
+    height: 100%;
+
+    margin: 0;
+    padding: 0;
+
+    overflow: hidden;
+
+    background: transparent;
+
+}
+
+.note {
+
+    width: 100%;
+    height: 100%;
+
+    display: flex;
+
+    flex-direction: column;
+
+    overflow: hidden;
+
+    background: #fff59d;
+
+    border-radius: 10px;
+
+    box-shadow:
+        0 5px 18px rgba(0,0,0,0.25);
+
+}
+
+.title {
+
+    height: 45px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    padding: 0 10px;
+
+    font-weight: bold;
+
+    user-select: none;
+
+    -webkit-app-region: drag;
+
+}
+
+.title-text {
+
+    font-size: 15px;
+
+}
+
+.buttons {
+
+    display: flex;
+
+    gap: 4px;
+
+    -webkit-app-region: no-drag;
+
+}
+
+button {
+
+    width: 30px;
+
+    height: 30px;
+
+    border: none;
+
+    border-radius: 6px;
+
+    background: transparent;
+
+    cursor: pointer;
+
+    font-size: 17px;
+
+}
+
+button:hover {
+
+    background: rgba(0,0,0,0.12);
+
+}
+
+textarea {
+
+    flex: 1;
+
+    width: 100%;
+
+    padding: 12px;
+
+    border: none;
+
+    outline: none;
+
+    resize: none;
+
+    background: transparent;
+
+    font-size: 18px;
+
+    font-family:
+        Arial,
+        "Microsoft JhengHei",
+        sans-serif;
+
+    color: #333;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div
+    class="note"
+    id="note"
+>
+
+    <div class="title">
+
+        <span class="title-text">
+            📌 我的便利貼
+        </span>
+
+        <div class="buttons">
+
+            <button
+                id="controlButton"
+                title="控制面板"
+            >
+                ⚙
+            </button>
+
+            <button
+                id="deleteButton"
+                title="刪除"
+            >
+                ×
+            </button>
+
+        </div>
+
+    </div>
+
+    <textarea
+        id="textarea"
+        placeholder="在這裡輸入文字..."
+    ></textarea>
+
+</div>
+
+
+<script>
+
+let currentNote = null;
+
+const note =
+    document.getElementById("note");
+
+const textarea =
+    document.getElementById("textarea");
+
+const deleteButton =
+    document.getElementById("deleteButton");
+
+const controlButton =
+    document.getElementById("controlButton");
+
+
+// 載入便利貼
+
+window.electronAPI.onLoadNote((data) => {
+
+    currentNote = data;
+
+    textarea.value =
+        data.text || "";
+
+    note.style.backgroundColor =
+        data.color || "#fff59d";
+
+});
+
+
+// 修改文字
+
+textarea.addEventListener(
+    "input",
+    () => {
+
+        if (!currentNote) {
+            return;
+        }
+
+        currentNote.text =
+            textarea.value;
+
+        window.electronAPI.updateNote({
+
+            id: currentNote.id,
+
+            text: textarea.value
+
+        });
+
+    }
+);
+
+
+// 刪除
+
+deleteButton.addEventListener(
+    "click",
+    () => {
+
+        if (!currentNote) {
+            return;
+        }
+
+        window.electronAPI.deleteNote(
+            currentNote.id
+        );
+
+    }
+);
+
+
+// 開啟控制面板
+
+controlButton.addEventListener(
+    "click",
+    () => {
+
+        window.electronAPI.openControl();
+
+    }
+);
+
+
+// 接收顏色更新
+
+window.electronAPI.onNoteUpdated(
+    (data) => {
+
+        if (!currentNote) {
+            return;
+        }
+
+        if (
+            data.id === currentNote.id
+        ) {
+
+            currentNote = data;
+
+            note.style.backgroundColor =
+                data.color;
+
+        }
+
+    }
+);
+
+</script>
+
+</body>
+
+</html>
+
+/////////////////////////////////////////////////////////////////////
+
+新增control.html：
+
+<!DOCTYPE html>
+
+<html lang="zh-TW">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>我的便利貼控制中心</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+
+    margin: 0;
+
+    padding: 20px;
+
+    font-family:
+        Arial,
+        "Microsoft JhengHei",
+        sans-serif;
+
+    background: #f3f3f3;
+
+    color: #333;
+
+}
+
+h1 {
+
+    margin: 0 0 18px 0;
+
+    font-size: 23px;
+
+}
+
+.add-button {
+
+    width: 100%;
+
+    padding: 14px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    background: #4caf50;
+
+    color: white;
+
+    font-size: 17px;
+
+    cursor: pointer;
+
+    margin-bottom: 18px;
+
+}
+
+.add-button:hover {
+
+    background: #43a047;
+
+}
+
+.section {
+
+    background: white;
+
+    padding: 15px;
+
+    border-radius: 12px;
+
+    margin-bottom: 15px;
+
+}
+
+.section-title {
+
+    font-weight: bold;
+
+    margin-bottom: 12px;
+
+}
+
+.note-list {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 8px;
+
+}
+
+.note-item {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    padding: 10px;
+
+    border-radius: 8px;
+
+    cursor: pointer;
+
+}
+
+.note-item:hover {
+
+    background: #eeeeee;
+
+}
+
+.note-name {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+}
+
+.note-color {
+
+    width: 18px;
+
+    height: 18px;
+
+    border-radius: 50%;
+
+    border: 1px solid #aaa;
+
+}
+
+.delete-small {
+
+    border: none;
+
+    background: transparent;
+
+    color: #777;
+
+    cursor: pointer;
+
+    font-size: 18px;
+
+}
+
+.colors {
+
+    display: flex;
+
+    gap: 10px;
+
+    flex-wrap: wrap;
+
+}
+
+.color {
+
+    width: 42px;
+
+    height: 42px;
+
+    border-radius: 50%;
+
+    border: 3px solid white;
+
+    outline: 1px solid #bbb;
+
+    cursor: pointer;
+
+}
+
+.color:hover {
+
+    transform: scale(1.08);
+
+}
+
+.yellow {
+    background: #fff59d;
+}
+
+.blue {
+    background: #90caf9;
+}
+
+.green {
+    background: #a5d6a7;
+}
+
+.pink {
+    background: #f8bbd0;
+}
+
+.purple {
+    background: #ce93d8;
+}
+
+.selected {
+
+    outline:
+        3px solid #333;
+
+}
+
+.empty {
+
+    color: #888;
+
+    text-align: center;
+
+    padding: 15px;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+
+<h1>
+    📌 我的便利貼
+</h1>
+
+
+<button
+    class="add-button"
+    id="addNote"
+>
+    ＋ 新增便利貼
+</button>
+
+
+<div class="section">
+
+    <div class="section-title">
+        📝 我的便利貼
+    </div>
+
+    <div
+        class="note-list"
+        id="noteList"
+    ></div>
+
+</div>
+
+
+<div class="section">
+
+    <div class="section-title">
+        🎨 選取的便利貼顏色
+    </div>
+
+    <div class="colors">
+
+        <button
+            class="color yellow"
+            data-color="#fff59d"
+            title="黃色"
+        ></button>
+
+        <button
+            class="color blue"
+            data-color="#90caf9"
+            title="藍色"
+        ></button>
+
+        <button
+            class="color green"
+            data-color="#a5d6a7"
+            title="綠色"
+        ></button>
+
+        <button
+            class="color pink"
+            data-color="#f8bbd0"
+            title="粉紅色"
+        ></button>
+
+        <button
+            class="color purple"
+            data-color="#ce93d8"
+            title="紫色"
+        ></button>
+
+    </div>
+
+</div>
+
+
+<div class="section">
+
+    <div class="section-title">
+        💡 使用方式
+    </div>
+
+    <div style="color:#777; line-height:1.7; font-size:14px;">
+
+        按「＋ 新增便利貼」建立新的便利貼。
+
+        <br>
+
+        可以直接拖曳便利貼。
+
+        <br>
+
+        右上角 ⚙ 可以開啟這個控制面板。
+
+        <br>
+
+        文字、顏色和位置會自動保存。
+
+    </div>
+
+</div>
+
+
+<script>
+
+let notes = [];
+
+let selectedNoteId = null;
+
+const noteList =
+    document.getElementById("noteList");
+
+const addNote =
+    document.getElementById("addNote");
+
+
+// ==============================
+// 新增
+// ==============================
+
+addNote.addEventListener(
+    "click",
+    () => {
+
+        window.electronAPI.createNote();
+
+    }
+);
+
+
+// ==============================
+// 接收便利貼
+// ==============================
+
+window.electronAPI.onNotesUpdated(
+    (data) => {
+
+        notes = data;
+
+        renderNotes();
+
+    }
+);
+
+
+// ==============================
+// 顯示便利貼
+// ==============================
+
+function renderNotes() {
+
+    noteList.innerHTML = "";
+
+    if (notes.length === 0) {
+
+        noteList.innerHTML = `
+            <div class="empty">
+                目前沒有便利貼
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    notes.forEach((note) => {
+
+        const item =
+            document.createElement("div");
+
+        item.className =
+            "note-item";
+
+
+        if (
+            note.id === selectedNoteId
+        ) {
+
+            item.style.background =
+                "#e8e8e8";
+
+        }
+
+
+        const name =
+            document.createElement("div");
+
+        name.className =
+            "note-name";
+
+
+        const color =
+            document.createElement("span");
+
+        color.className =
+            "note-color";
+
+        color.style.background =
+            note.color;
+
+
+        const text =
+            document.createElement("span");
+
+        text.textContent =
+            note.text
+                ? note.text.substring(0, 20)
+                : "空白便利貼";
+
+
+        name.appendChild(color);
+
+        name.appendChild(text);
+
+
+        const deleteButton =
+            document.createElement("button");
+
+        deleteButton.className =
+            "delete-small";
+
+        deleteButton.textContent =
+            "×";
+
+
+        deleteButton.addEventListener(
+            "click",
+            (event) => {
+
+                event.stopPropagation();
+
+                window.electronAPI.deleteNote(
+                    note.id
+                );
+
+            }
+        );
+
+
+        item.appendChild(name);
+
+        item.appendChild(deleteButton);
+
+
+        item.addEventListener(
+            "click",
+            () => {
+
+                selectedNoteId =
+                    note.id;
+
+                renderNotes();
+
+                window.electronAPI.focusNote(
+                    note.id
+                );
+
+            }
+        );
+
+
+        noteList.appendChild(item);
+
+    });
+
+}
+
+
+// ==============================
+// 顏色
+// ==============================
+
+document
+    .querySelectorAll(".color")
+    .forEach((button) => {
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                if (!selectedNoteId) {
+
+                    alert(
+                        "請先選擇一張便利貼"
+                    );
+
+                    return;
+
+                }
+
+
+                const color =
+                    button.dataset.color;
+
+
+                window.electronAPI.updateNote({
+
+                    id: selectedNoteId,
+
+                    color: color
+
+                });
+
+            }
+        );
+
+    });
+
+</script>
+
+</body>
+
+</html>
+///////////////////////////////////////////////////////////////////
+
+修改package.json：
+
+{
+  "name": "mystickynotes",
+  "version": "1.0.0",
+  "description": "我的 Windows 桌面便利貼",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TuTu55527/MyStickyNotes.git"
+  },
+  "keywords": [
+    "sticky-notes",
+    "electron",
+    "windows"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^44.5.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.mystickynotes.app",
+    "productName": "我的便利貼",
+    "win": {
+      "target": "portable"
+    },
+    "publish": null
+  }
+}
