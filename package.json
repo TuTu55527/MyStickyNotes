@@ -27,10 +27,7 @@
     "appId": "com.mystickynotes.app",
     "productName": "我的便利貼",
     "win": {
-      "target": "nsis"
-    },
-    "nsis": {
-      "runAfterFinish": false
+      "target": "portable"
     },
     "publish": null
   }
