@@ -24,13 +24,14 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-  "appId": "com.mystickynotes.app",
-  "productName": "我的便利貼",
-  "win": {
-    "target": "nsis"
+    "appId": "com.mystickynotes.app",
+    "productName": "我的便利貼",
+    "win": {
+      "target": "nsis"
     },
-  "nsis": {
-    "runAfterFinish": false
-    }
+    "nsis": {
+      "runAfterFinish": false
+    },
+    "publish": null
   }
 }
