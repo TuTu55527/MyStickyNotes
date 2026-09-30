@@ -1,0 +1,36 @@
+{
+  "name": "mystickynotes",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TuTu55527/MyStickyNotes.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/TuTu55527/MyStickyNotes/issues"
+  },
+  "homepage": "https://github.com/TuTu55527/MyStickyNotes#readme",
+  "devDependencies": {
+    "electron": "^44.5.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+  "appId": "com.mystickynotes.app",
+  "productName": "我的便利貼",
+  "win": {
+    "target": "nsis"
+    },
+  "nsis": {
+    "runAfterFinish": false
+    }
+  }
+}

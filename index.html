@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>我的便利貼</title>
+
+    <style>
+
+        body {
+            background-color: #eeeeee;
+            margin: 0;
+        }
+
+        #addNote {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 9999;
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .note {
+            width: 250px;
+            height: 250px;
+
+            background-color: #fff59d;
+
+            padding: 20px;
+
+            position: absolute;
+
+            box-sizing: border-box;
+
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+        }
+
+        .title {
+            height: 45px;
+
+            cursor: move;
+
+            font-weight: bold;
+
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+
+            border-bottom: 1px solid #999;
+
+            user-select: none;
+        }
+
+        .delete {
+            border: none;
+            background: transparent;
+
+            cursor: pointer;
+
+            font-size: 18px;
+        }
+
+        textarea {
+            width: 100%;
+            height: calc(100% - 45px);
+
+            box-sizing: border-box;
+
+            border: none;
+
+            background-color: transparent;
+
+            resize: none;
+
+            outline: none;
+
+            font-size: 18px;
+
+            padding-top: 10px;
+        }
+
+    </style>
+</head>
+
+<body>
+
+    <button id="addNote">＋ 新增便利貼</button>
+
+
+    <script>
+
+        const addNote = document.getElementById("addNote");
+
+
+        // 從 localStorage 讀取資料
+        let notes = JSON.parse(localStorage.getItem("notes")) || [];
+
+
+        // 儲存資料
+        function saveNotes() {
+
+            localStorage.setItem(
+                "notes",
+                JSON.stringify(notes)
+            );
+
+        }
+
+
+        // 建立便利貼
+        function createNote(noteData) {
+
+            const note = document.createElement("div");
+
+            note.className = "note";
+
+            // 使用 id 找到這張便利貼
+            note.dataset.id = noteData.id;
+
+
+            // 設定位置
+            note.style.left = noteData.x + "px";
+            note.style.top = noteData.y + "px";
+
+
+            note.innerHTML = `
+                <div class="title">
+
+                    <span>📌 我的便利貼</span>
+
+                    <button class="delete">×</button>
+
+                </div>
+
+                <textarea
+                    placeholder="在這裡輸入文字..."
+                ></textarea>
+            `;
+
+
+            document.body.appendChild(note);
+
+
+            const textarea =
+                note.querySelector("textarea");
+
+            const deleteButton =
+                note.querySelector(".delete");
+
+
+            // 放入之前儲存的文字
+            textarea.value = noteData.text;
+
+
+            // =========================
+            // 文字輸入
+            // =========================
+
+            textarea.addEventListener("input", function() {
+
+                const data = notes.find(function(item) {
+
+                    return item.id === noteData.id;
+
+                });
+
+
+                if (data) {
+
+                    data.text = textarea.value;
+
+                    saveNotes();
+
+                }
+
+            });
+
+
+            // =========================
+            // 刪除便利貼
+            // =========================
+
+            deleteButton.addEventListener("click", function() {
+
+                note.remove();
+
+
+                notes = notes.filter(function(item) {
+
+                    return item.id !== noteData.id;
+
+                });
+
+
+                saveNotes();
+
+            });
+
+
+            // =========================
+            // 拖曳
+            // =========================
+
+            makeDraggable(note);
+
+        }
+
+
+        // =========================
+        // 拖曳功能
+        // =========================
+
+        function makeDraggable(note) {
+
+            const title =
+                note.querySelector(".title");
+
+
+            let isDragging = false;
+
+            let offsetX = 0;
+            let offsetY = 0;
+
+
+            title.addEventListener("mousedown", function(event) {
+
+                // 如果按到刪除按鈕，不拖曳
+                if (
+                    event.target.classList.contains("delete")
+                ) {
+                    return;
+                }
+
+
+                isDragging = true;
+
+
+                offsetX =
+                    event.clientX - note.offsetLeft;
+
+                offsetY =
+                    event.clientY - note.offsetTop;
+
+
+            });
+
+
+            document.addEventListener("mousemove", function(event) {
+
+                if (!isDragging) {
+                    return;
+                }
+
+
+                const x =
+                    event.clientX - offsetX;
+
+                const y =
+                    event.clientY - offsetY;
+
+
+                note.style.left = x + "px";
+
+                note.style.top = y + "px";
+
+
+                // 找到這張便利貼
+                const data = notes.find(function(item) {
+
+                    return item.id == note.dataset.id;
+
+                });
+
+
+                if (data) {
+
+                    data.x = x;
+                    data.y = y;
+
+                }
+
+            });
+
+
+            document.addEventListener("mouseup", function() {
+
+                if (isDragging) {
+
+                    isDragging = false;
+
+                    // 拖曳結束後儲存
+                    saveNotes();
+
+                }
+
+            });
+
+        }
+
+
+        // =========================
+        // 新增便利貼
+        // =========================
+
+        addNote.addEventListener("click", function() {
+
+
+            const newNote = {
+
+                id: Date.now(),
+
+                text: "",
+
+                x: 300,
+
+                y: 100
+
+            };
+
+
+            // 加入陣列
+            notes.push(newNote);
+
+
+            // 儲存
+            saveNotes();
+
+
+            // 顯示便利貼
+            createNote(newNote);
+
+        });
+
+
+        // =========================
+        // 網頁開啟時
+        // 把以前的便利貼全部建立回來
+        // =========================
+
+        notes.forEach(function(noteData) {
+
+            createNote(noteData);
+
+        });
+
+    </script>
+
+</body>
+</html>
